@@ -193,8 +193,11 @@ async def jalankan_analisis_irt(id_paket: int):
                 skor_raw = hitung_skor_skala(theta_individu, TIPE_PAKET, benar_semua=benar_semua)
                 skor_final = round(skor_raw, 2)
                 
-                prob_raw = np.mean(hitung_probabilitas_soal(theta_individu, diff_t, disc_t, guess_t))
-                akurasi_persen = round(float(prob_raw * 100), 2)
+                if benar_semua:
+                    akurasi_persen = 100.0
+                else:
+                    prob_raw = np.mean(hitung_probabilitas_soal(theta_individu, diff_t, disc_t, guess_t))
+                    akurasi_persen = round(float(prob_raw * 100), 2)
                 
                 val_peserta = (
                     id_paket, int(user_id), int(id_topik),
