@@ -36,7 +36,7 @@ def hitung_skor_skala(theta, tipe_paket, benar_semua=False):
         skor = ((theta + 3) / 6) * 1000
         return float(np.clip(skor, 0, 1000))
     else:
-        skor = 70 + (12 * theta)
+        skor = ((theta + 3) / 6) * 100
         return float(np.clip(skor, 0, 100))
 
 def hitung_probabilitas_soal(theta, diffs, discs, guesses=None):
@@ -95,9 +95,9 @@ async def jalankan_analisis_irt(id_paket: int):
         TIPE_PAKET = paket_info['tipe_soal']
 
         # 2. CEK APAKAH SUDAH PERNAH DIOLAH
-        cursor.execute("SELECT id_irt_peserta FROM irt_peserta WHERE paket_id = %s LIMIT 1", (id_paket,))
-        if cursor.fetchone():
-            raise HTTPException(status_code=400, detail=f"Paket ID {id_paket} sudah pernah diolah.")
+        # cursor.execute("SELECT id_irt_peserta FROM irt_peserta WHERE paket_id = %s LIMIT 1", (id_paket,))
+        # if cursor.fetchone():
+        #     raise HTTPException(status_code=400, detail=f"Paket ID {id_paket} sudah pernah diolah.")
 
         # 3. AMBIL DATA JAWABAN DARI DATABASE
         query = """
@@ -119,6 +119,10 @@ async def jalankan_analisis_irt(id_paket: int):
 
         if not rows:
             raise HTTPException(status_code=422, detail="Data jawaban tidak ditemukan untuk ID Paket tersebut.")
+
+        # 3. BERSIHKAN DATA HASIL ANALISIS LAMA SEBELUM MENIMPA
+        cursor.execute("DELETE FROM irt_soal WHERE paket_id = %s", (id_paket,))
+        cursor.execute("DELETE FROM irt_peserta WHERE paket_id = %s", (id_paket,))
 
         df = pd.DataFrame(rows)
         daftar_topik = df['id_topik'].unique()
