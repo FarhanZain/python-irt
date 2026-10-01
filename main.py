@@ -27,23 +27,54 @@ def get_db_connection():
     )
 
 # --- FUNGSI HELPER IRT ---
-def hitung_skor_skala(theta, tipe_paket, benar_semua=False):
-    is_utbk = "utbk" in tipe_paket.lower()
-    if benar_semua:
-        return 1000.0 if is_utbk else 100.0
-        
-    if is_utbk:
-        skor = ((theta + 3) / 6) * 1000
-        return float(np.clip(skor, 0, 1000))
-    else:
-        skor = ((theta + 3) / 6) * 100
-        return float(np.clip(skor, 0, 100))
+def hitung_skor_skala(theta, diffs, discs, guesses, total_benar=None, total_soal=None, max_score=1000.0):
+    """
+    Menghitung skor skala 0-1000 berbasis TCC dengan kompensasi pseudo-guessing
+    serta penanganan edge case (0 dan max_score).
+    """
+    # 1. Edge cases berdasarkan performa riil peserta
+    if total_benar is not None and total_soal is not None:
+        if total_benar == 0:
+            return 0.0
+        if total_benar == total_soal:
+            return float(max_score)
 
-def hitung_probabilitas_soal(theta, diffs, discs, guesses=None):
-    if guesses is None: 
-        guesses = np.zeros(len(diffs))
+    # 2. Kalkulasi Probabilitas TCC (3PL IRT)
     exponent = -discs * (theta - diffs)
-    return guesses + (1 - guesses) / (1 + np.exp(exponent))
+    prob_per_soal = guesses + (1.0 - guesses) / (1.0 + np.exp(exponent))
+    
+    # 3. Expected score & kompensasi tebakan acak (guessing effect)
+    expected_score = np.sum(prob_per_soal)
+    min_expected_score = np.sum(guesses)  # Nilai ekspektasi jika peserta hanya tebak acak
+    
+    # Jika total_soal tidak dioper lewat argumen, ambil dari panjang array diffs
+    if total_soal is None:
+        total_soal = len(diffs)
+
+    # Avoid division by zero jika total_soal == min_expected_score
+    pembagi = total_soal - min_expected_score
+    if pembagi <= 0:
+        rasio_skor = np.mean(prob_per_soal)
+    else:
+        # Skalakan ulang agar tebakan acak berada di titik dasar (0)
+        rasio_skor = (expected_score - min_expected_score) / pembagi
+
+    # 4. Skalakan ke max_score dan jepit di rentang [0, max_score]
+    skor = rasio_skor * max_score
+    return float(np.clip(skor, 0.0, max_score))
+
+# ------------------------------------------------------------------
+
+# def hitung_probabilitas_soal(theta, diffs, discs, guesses=None):
+#     if guesses is None: 
+#         guesses = np.zeros(len(diffs))
+#     exponent = -discs * (theta - diffs)
+#     return guesses + (1 - guesses) / (1 + np.exp(exponent))
+
+def hitung_akurasi(total_benar, total_soal):
+    if total_soal == 0:
+        return 0.0
+    return round((total_benar / total_soal) * 100, 2)
 
 def tentukan_kategori_soal(nilai):
     if nilai < -1.0: return "Mudah"
@@ -162,7 +193,7 @@ async def jalankan_analisis_irt(id_paket: int):
                 disc_t = res_t['Discrimination']
                 guess_t = res_t['Guessing']
                 th_t = ability_3pl_eap(ds_t, diff_t, disc_t, guess_t)
-
+            
             # --- Simpan Parameter Soal ke irt_soal ---
             sql_soal = """INSERT INTO irt_soal 
                         (paket_id, soal_id, tingkat_kesulitan, kategori_kesulitan, daya_pembeda, kategori_daya_pembeda, tebakan, model_irt) 
@@ -192,16 +223,28 @@ async def jalankan_analisis_irt(id_paket: int):
 
                 total_benar = int(np.sum(jawaban_user))
                 total_soal = len(jawaban_user)
-                benar_semua = (total_benar == total_soal)
+                # benar_semua = (total_benar == total_soal)
                 
-                skor_raw = hitung_skor_skala(theta_individu, TIPE_PAKET, benar_semua=benar_semua)
+                skor_raw = hitung_skor_skala(
+                    theta=theta_individu,
+                    diffs=diff_t,
+                    discs=disc_t,
+                    guesses=guess_t,
+                    total_benar=total_benar,
+                    total_soal=total_soal,
+                    max_score=1000.0
+                )
+
                 skor_final = round(skor_raw, 2)
                 
-                if benar_semua:
-                    akurasi_persen = 100.0
-                else:
-                    prob_raw = np.mean(hitung_probabilitas_soal(theta_individu, diff_t, disc_t, guess_t))
-                    akurasi_persen = round(float(prob_raw * 100), 2)
+                # if benar_semua:
+                #     akurasi_persen = 100.0
+                # else:
+                #     prob_raw = np.mean(hitung_probabilitas_soal(theta_individu, diff_t, disc_t, guess_t))
+                #     akurasi_persen = round(float(prob_raw * 100), 2)
+
+                # --- MENGHITUNG AKURASI RIIL DARI KINERJA USER ---
+                akurasi_persen = hitung_akurasi(total_benar, total_soal)
                 
                 val_peserta = (
                     id_paket, int(user_id), int(id_topik),
@@ -209,6 +252,7 @@ async def jalankan_analisis_irt(id_paket: int):
                     kategorikan_kemampuan(theta_individu, mean_theta_topik, std_theta_topik)
                 )
                 cursor.execute(sql_peserta, val_peserta)
+
 
         # ======================================================
         # SIMPAN NOTIFIKASI
